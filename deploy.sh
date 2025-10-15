@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script (Auto IP + Let’s Encrypt HTTPS)
+# Django Deployment Script (Hybrid LAN + Public Domain HTTPS)
 # ==========================
-# Fully hands-off deployment:
-# - Detects active IP
-# - Updates ALLOWED_HOSTS in settings.py
+# Features:
+# - Detects active LAN/mobile IP
+# - Updates ALLOWED_HOSTS in settings.py for local and public access
 # - Sets up Django, Gunicorn, Nginx
-# - Enables HTTPS using Let’s Encrypt
+# - HTTPS via Let’s Encrypt for public domain
 # ==========================
 
 # --- Configuration variables ---
@@ -25,12 +25,13 @@ POSTGRES_USER="myuser"
 POSTGRES_PASSWORD="mypassword"
 
 # Your public domain pointing to this server (required for Let’s Encrypt)
-DOMAIN_NAME="example.com"  # <- replace with your domain
+DOMAIN_NAME="example.com"  # <- replace with your actual domain
+ADMIN_EMAIL="admin@$DOMAIN_NAME"
 
 # ---------------------------
-# Functions
+# Start deployment
 # ---------------------------
-echo "Starting deployment script..."
+echo "Starting hybrid deployment script..."
 
 # Detect active network interface and its IP
 ACTIVE_IF=$(ip route get 1 | awk '{print $5; exit}')
@@ -38,7 +39,7 @@ ACTIVE_IP=$(ip -4 addr show $ACTIVE_IF | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 echo "Active network interface: $ACTIVE_IF"
 echo "Detected active IP: $ACTIVE_IP"
 
-# Set ALLOWED_HOSTS array
+# Set ALLOWED_HOSTS array (LAN IP + public domain + localhost)
 ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP" "$DOMAIN_NAME")
 echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
 
@@ -46,43 +47,33 @@ echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
 if [ -f "$DJANGO_SETTINGS" ]; then
     echo "Updating ALLOWED_HOSTS in settings.py..."
     sed -i "/^ALLOWED_HOSTS/ d" $DJANGO_SETTINGS
-    echo "ALLOWED_HOSTS = ['$ACTIVE_IP', '127.0.0.1', 'localhost', '$DOMAIN_NAME']" >> $DJANGO_SETTINGS
+    echo "ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '$ACTIVE_IP', '$DOMAIN_NAME']" >> $DJANGO_SETTINGS
 else
     echo "Warning: settings.py not found. Please check PROJECT_DIR."
 fi
 
 # Update packages
-echo "Updating system packages..."
 sudo apt update && sudo apt upgrade -y
-
-# Install dependencies
-echo "Installing required packages..."
 sudo apt install -y python3-pip python3-venv python3-dev \
     nginx git curl build-essential libpq-dev certbot python3-certbot-nginx ufw
 
-# Create project directory if not exists
+# Create project directory
 mkdir -p $PROJECT_DIR
 
-# Create virtual environment
-echo "Creating virtual environment..."
+# Create virtualenv
 $PYTHON_BIN -m venv $VENV_DIR
 source $VENV_DIR/bin/activate
-
-# Upgrade pip
 pip install --upgrade pip
 
-# Install project requirements
+# Install dependencies
 if [ -f "$PROJECT_DIR/requirements.txt" ]; then
-    echo "Installing Python dependencies..."
     pip install -r $PROJECT_DIR/requirements.txt
 else
-    echo "requirements.txt not found, installing Django and Gunicorn..."
     pip install django gunicorn psycopg2-binary
 fi
 
-# Database setup
+# Database setup (optional PostgreSQL)
 if [ "$USE_POSTGRES" = true ]; then
-    echo "Setting up PostgreSQL..."
     sudo service postgresql start
     sudo -u postgres psql -c "CREATE DATABASE $POSTGRES_DB;"
     sudo -u postgres psql -c "CREATE USER $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD';"
@@ -92,8 +83,7 @@ if [ "$USE_POSTGRES" = true ]; then
     sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE $POSTGRES_DB TO $POSTGRES_USER;"
 fi
 
-# Django setup
-echo "Running Django migrations..."
+# Django migrations & collectstatic
 cd $PROJECT_DIR
 source $VENV_DIR/bin/activate
 export DJANGO_SETTINGS_MODULE="$PROJECT_NAME.settings"
@@ -101,11 +91,9 @@ python $DJANGO_MANAGE migrate
 python $DJANGO_MANAGE collectstatic --noinput
 
 # Create superuser (interactive)
-echo "You can create a Django superuser now:"
 python $DJANGO_MANAGE createsuperuser
 
 # Gunicorn systemd service
-echo "Creating Gunicorn systemd service..."
 sudo tee /etc/systemd/system/$PROJECT_NAME.service > /dev/null <<EOF
 [Unit]
 Description=Gunicorn daemon for $PROJECT_NAME
@@ -121,17 +109,15 @@ ExecStart=$VENV_DIR/bin/gunicorn --access-logfile - --workers 3 --bind unix:$PRO
 WantedBy=multi-user.target
 EOF
 
-# Start and enable Gunicorn
 sudo systemctl daemon-reload
 sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
 
-# Nginx configuration (HTTP redirect to HTTPS)
-echo "Configuring Nginx for Django..."
+# Nginx configuration for both LAN and public domain
 sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
 server {
     listen 80;
-    server_name $DOMAIN_NAME $ACTIVE_IP;
+    server_name $ACTIVE_IP $DOMAIN_NAME;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
@@ -149,12 +135,14 @@ sudo ln -sf /etc/nginx/sites-available/$PROJECT_NAME /etc/nginx/sites-enabled
 sudo nginx -t
 sudo systemctl restart nginx
 
-# Firewall configuration
+# Firewall
 sudo ufw allow 'Nginx Full'
 
-# Obtain HTTPS certificate via Let’s Encrypt
+# Obtain HTTPS certificate via Let’s Encrypt (public domain only)
 echo "Obtaining Let’s Encrypt SSL certificate for $DOMAIN_NAME..."
-sudo certbot --nginx -d $DOMAIN_NAME --non-interactive --agree-tos -m admin@$DOMAIN_NAME
+sudo certbot --nginx -d $DOMAIN_NAME --non-interactive --agree-tos -m $ADMIN_EMAIL
 
-echo "Deployment finished successfully!"
-echo "Your Django site is now available at: https://$DOMAIN_NAME"
+# Nginx HTTPS redirect for LAN access optional (LAN remains HTTP, public domain HTTPS)
+echo "Hybrid deployment complete!"
+echo "LAN access: http://$ACTIVE_IP"
+echo "Public access: https://$DOMAIN_NAME"
