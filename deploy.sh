@@ -1,17 +1,17 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script (Smart Auto-detect IP)
+# Django Deployment Script (Auto-detect IP + Update settings.py)
 # ==========================
-# Detects the active network interface and its IP to set ALLOWED_HOSTS
-# Sets up Django with Gunicorn and Nginx
+# Fully hands-off deployment: detects active IP, updates ALLOWED_HOSTS in settings.py,
+# sets up Django with Gunicorn and Nginx, creates self-signed SSL.
 # ==========================
 
 # --- Configuration variables ---
 PROJECT_NAME="django_alison_lms"
 PROJECT_DIR="/home/$USER/$PROJECT_NAME"
 VENV_DIR="$PROJECT_DIR/venv"
-DJANGO_SETTINGS_MODULE="$PROJECT_NAME.settings"
+DJANGO_SETTINGS="$PROJECT_DIR/$PROJECT_NAME/settings.py"
 DJANGO_MANAGE="$PROJECT_DIR/manage.py"
 PYTHON_BIN="/usr/bin/python3"
 
@@ -32,9 +32,20 @@ ACTIVE_IP=$(ip -4 addr show $ACTIVE_IF | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
 echo "Active network interface: $ACTIVE_IF"
 echo "Detected active IP: $ACTIVE_IP"
 
-# Set ALLOWED_HOSTS
+# Set ALLOWED_HOSTS array
 ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP")
-echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
+ALLOWED_HOSTS_STRING=$(IFS=", "; echo "${ALLOWED_HOSTS[*]}")
+echo "ALLOWED_HOSTS will be: $ALLOWED_HOSTS_STRING"
+
+# Update ALLOWED_HOSTS in settings.py
+if [ -f "$DJANGO_SETTINGS" ]; then
+    echo "Updating ALLOWED_HOSTS in settings.py..."
+    # Remove existing ALLOWED_HOSTS line(s) and insert new one
+    sed -i "/^ALLOWED_HOSTS/ d" $DJANGO_SETTINGS
+    echo "ALLOWED_HOSTS = ['$ACTIVE_IP', '127.0.0.1', 'localhost']" >> $DJANGO_SETTINGS
+else
+    echo "Warning: settings.py not found. Please check PROJECT_DIR."
+fi
 
 # Update packages
 echo "Updating system packages..."
@@ -81,7 +92,7 @@ fi
 echo "Running Django migrations..."
 cd $PROJECT_DIR
 source $VENV_DIR/bin/activate
-export DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE
+export DJANGO_SETTINGS_MODULE="$PROJECT_NAME.settings"
 python $DJANGO_MANAGE migrate
 python $DJANGO_MANAGE collectstatic --noinput
 
@@ -112,12 +123,11 @@ sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
 
 # Nginx configuration
-ALLOWED_HOSTS_STRING=$(IFS=" "; echo "${ALLOWED_HOSTS[*]}")
 echo "Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
 server {
     listen 80;
-    server_name $ALLOWED_HOSTS_STRING;
+    server_name $ACTIVE_IP;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
@@ -148,5 +158,4 @@ sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=localhost"
 
 echo "Deployment finished successfully!"
-echo "Your Django site should be available at: ${ALLOWED_HOSTS[@]}"
-echo "SSL certificate is in: /etc/ssl/$PROJECT_NAME/$PROJECT_NAME.crt"
+echo "Your Django site should be available at: http://$ACTIVE_IP"
