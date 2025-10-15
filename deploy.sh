@@ -1,10 +1,13 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script (Auto-detect IP + Update settings.py)
+# Django Deployment Script (HTTPS, Auto IP, Update settings.py)
 # ==========================
-# Fully hands-off deployment: detects active IP, updates ALLOWED_HOSTS in settings.py,
-# sets up Django with Gunicorn and Nginx, creates self-signed SSL.
+# Fully hands-off deployment:
+# - Detects active IP
+# - Updates ALLOWED_HOSTS in settings.py
+# - Sets up Django, Gunicorn, Nginx
+# - Enables HTTPS with self-signed SSL
 # ==========================
 
 # --- Configuration variables ---
@@ -34,13 +37,11 @@ echo "Detected active IP: $ACTIVE_IP"
 
 # Set ALLOWED_HOSTS array
 ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP")
-ALLOWED_HOSTS_STRING=$(IFS=", "; echo "${ALLOWED_HOSTS[*]}")
-echo "ALLOWED_HOSTS will be: $ALLOWED_HOSTS_STRING"
+echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
 
 # Update ALLOWED_HOSTS in settings.py
 if [ -f "$DJANGO_SETTINGS" ]; then
     echo "Updating ALLOWED_HOSTS in settings.py..."
-    # Remove existing ALLOWED_HOSTS line(s) and insert new one
     sed -i "/^ALLOWED_HOSTS/ d" $DJANGO_SETTINGS
     echo "ALLOWED_HOSTS = ['$ACTIVE_IP', '127.0.0.1', 'localhost']" >> $DJANGO_SETTINGS
 else
@@ -54,7 +55,7 @@ sudo apt update && sudo apt upgrade -y
 # Install dependencies
 echo "Installing required packages..."
 sudo apt install -y python3-pip python3-venv python3-dev \
-    nginx git curl build-essential libpq-dev
+    nginx git curl build-essential libpq-dev openssl ufw
 
 # Create project directory if not exists
 mkdir -p $PROJECT_DIR
@@ -122,12 +123,32 @@ sudo systemctl daemon-reload
 sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
 
-# Nginx configuration
-echo "Configuring Nginx..."
+# SSL (self-signed)
+echo "Generating self-signed SSL certificate..."
+SSL_DIR="/etc/ssl/$PROJECT_NAME"
+sudo mkdir -p $SSL_DIR
+sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout $SSL_DIR/$PROJECT_NAME.key \
+    -out $SSL_DIR/$PROJECT_NAME.crt \
+    -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=$ACTIVE_IP"
+
+# Nginx configuration (HTTPS)
+echo "Configuring Nginx with HTTPS..."
 sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
 server {
     listen 80;
     server_name $ACTIVE_IP;
+
+    # Redirect all HTTP to HTTPS
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $ACTIVE_IP;
+
+    ssl_certificate $SSL_DIR/$PROJECT_NAME.crt;
+    ssl_certificate_key $SSL_DIR/$PROJECT_NAME.key;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
@@ -146,16 +167,8 @@ sudo ln -sf /etc/nginx/sites-available/$PROJECT_NAME /etc/nginx/sites-enabled
 sudo nginx -t
 sudo systemctl restart nginx
 
-# Firewall (optional)
+# Firewall configuration
 sudo ufw allow 'Nginx Full'
 
-# SSL (self-signed)
-echo "Generating self-signed SSL certificate..."
-sudo mkdir -p /etc/ssl/$PROJECT_NAME
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/ssl/$PROJECT_NAME/$PROJECT_NAME.key \
-    -out /etc/ssl/$PROJECT_NAME/$PROJECT_NAME.crt \
-    -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=localhost"
-
 echo "Deployment finished successfully!"
-echo "Your Django site should be available at: http://$ACTIVE_IP"
+echo "Your Django site is now accessible at: https://$ACTIVE_IP"
