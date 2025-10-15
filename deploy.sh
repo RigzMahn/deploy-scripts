@@ -1,13 +1,13 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script (HTTPS, Auto IP, Update settings.py)
+# Django Deployment Script (Auto IP + Let’s Encrypt HTTPS)
 # ==========================
 # Fully hands-off deployment:
 # - Detects active IP
 # - Updates ALLOWED_HOSTS in settings.py
 # - Sets up Django, Gunicorn, Nginx
-# - Enables HTTPS with self-signed SSL
+# - Enables HTTPS using Let’s Encrypt
 # ==========================
 
 # --- Configuration variables ---
@@ -24,6 +24,9 @@ POSTGRES_DB="mydb"
 POSTGRES_USER="myuser"
 POSTGRES_PASSWORD="mypassword"
 
+# Your public domain pointing to this server (required for Let’s Encrypt)
+DOMAIN_NAME="example.com"  # <- replace with your domain
+
 # ---------------------------
 # Functions
 # ---------------------------
@@ -36,14 +39,14 @@ echo "Active network interface: $ACTIVE_IF"
 echo "Detected active IP: $ACTIVE_IP"
 
 # Set ALLOWED_HOSTS array
-ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP")
+ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP" "$DOMAIN_NAME")
 echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
 
 # Update ALLOWED_HOSTS in settings.py
 if [ -f "$DJANGO_SETTINGS" ]; then
     echo "Updating ALLOWED_HOSTS in settings.py..."
     sed -i "/^ALLOWED_HOSTS/ d" $DJANGO_SETTINGS
-    echo "ALLOWED_HOSTS = ['$ACTIVE_IP', '127.0.0.1', 'localhost']" >> $DJANGO_SETTINGS
+    echo "ALLOWED_HOSTS = ['$ACTIVE_IP', '127.0.0.1', 'localhost', '$DOMAIN_NAME']" >> $DJANGO_SETTINGS
 else
     echo "Warning: settings.py not found. Please check PROJECT_DIR."
 fi
@@ -55,7 +58,7 @@ sudo apt update && sudo apt upgrade -y
 # Install dependencies
 echo "Installing required packages..."
 sudo apt install -y python3-pip python3-venv python3-dev \
-    nginx git curl build-essential libpq-dev openssl ufw
+    nginx git curl build-essential libpq-dev certbot python3-certbot-nginx ufw
 
 # Create project directory if not exists
 mkdir -p $PROJECT_DIR
@@ -123,32 +126,12 @@ sudo systemctl daemon-reload
 sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
 
-# SSL (self-signed)
-echo "Generating self-signed SSL certificate..."
-SSL_DIR="/etc/ssl/$PROJECT_NAME"
-sudo mkdir -p $SSL_DIR
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout $SSL_DIR/$PROJECT_NAME.key \
-    -out $SSL_DIR/$PROJECT_NAME.crt \
-    -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=$ACTIVE_IP"
-
-# Nginx configuration (HTTPS)
-echo "Configuring Nginx with HTTPS..."
+# Nginx configuration (HTTP redirect to HTTPS)
+echo "Configuring Nginx for Django..."
 sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
 server {
     listen 80;
-    server_name $ACTIVE_IP;
-
-    # Redirect all HTTP to HTTPS
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name $ACTIVE_IP;
-
-    ssl_certificate $SSL_DIR/$PROJECT_NAME.crt;
-    ssl_certificate_key $SSL_DIR/$PROJECT_NAME.key;
+    server_name $DOMAIN_NAME $ACTIVE_IP;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
@@ -162,7 +145,6 @@ server {
 }
 EOF
 
-# Enable site and restart Nginx
 sudo ln -sf /etc/nginx/sites-available/$PROJECT_NAME /etc/nginx/sites-enabled
 sudo nginx -t
 sudo systemctl restart nginx
@@ -170,5 +152,9 @@ sudo systemctl restart nginx
 # Firewall configuration
 sudo ufw allow 'Nginx Full'
 
+# Obtain HTTPS certificate via Let’s Encrypt
+echo "Obtaining Let’s Encrypt SSL certificate for $DOMAIN_NAME..."
+sudo certbot --nginx -d $DOMAIN_NAME --non-interactive --agree-tos -m admin@$DOMAIN_NAME
+
 echo "Deployment finished successfully!"
-echo "Your Django site is now accessible at: https://$ACTIVE_IP"
+echo "Your Django site is now available at: https://$DOMAIN_NAME"
