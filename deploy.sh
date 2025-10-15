@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script
+# Django Deployment Script (Auto-detect IP)
 # ==========================
 # This script sets up a Django project with Gunicorn and Nginx
 # Author: ChatGPT
@@ -15,9 +15,6 @@ DJANGO_SETTINGS_MODULE="$PROJECT_NAME.settings"
 DJANGO_MANAGE="$PROJECT_DIR/manage.py"
 PYTHON_BIN="/usr/bin/python3"
 
-# Replace these with your server IPs
-ALLOWED_HOSTS=("127.0.0.1" "localhost" "YOUR_SERVER_IP")
-
 # Optional: PostgreSQL settings
 USE_POSTGRES=false
 POSTGRES_DB="mydb"
@@ -28,6 +25,13 @@ POSTGRES_PASSWORD="mypassword"
 # Functions
 # ---------------------------
 echo "Starting deployment script..."
+
+# Detect server IP(s)
+echo "Detecting server IP addresses..."
+SERVER_IPS=($(hostname -I))
+ALLOWED_HOSTS=("127.0.0.1" "localhost" "${SERVER_IPS[@]}")
+echo "Detected IPs: ${SERVER_IPS[@]}"
+echo "ALLOWED_HOSTS will be set to: ${ALLOWED_HOSTS[@]}"
 
 # Update packages
 echo "Updating system packages..."
@@ -105,11 +109,12 @@ sudo systemctl start $PROJECT_NAME
 sudo systemctl enable $PROJECT_NAME
 
 # Nginx configuration
+ALLOWED_HOSTS_STRING=$(IFS=" "; echo "${ALLOWED_HOSTS[*]}")
 echo "Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/$PROJECT_NAME > /dev/null <<EOF
 server {
     listen 80;
-    server_name ${ALLOWED_HOSTS[@]};
+    server_name $ALLOWED_HOSTS_STRING;
 
     location = /favicon.ico { access_log off; log_not_found off; }
     location /static/ {
@@ -140,3 +145,5 @@ sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=localhost"
 
 echo "Deployment finished successfully!"
+echo "Your Django site should be available on: ${ALLOWED_HOSTS[@]}"
+echo "You can access it at: http://${ALLOWED_HOSTS[0]}"
