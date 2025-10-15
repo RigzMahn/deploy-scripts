@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ==========================
-# Django Deployment Script (Auto-detect IP)
+# Django Deployment Script (Smart Auto-detect IP)
 # ==========================
-# This script sets up a Django project with Gunicorn and Nginx
-# Author: ChatGPT
+# Detects the active network interface and its IP to set ALLOWED_HOSTS
+# Sets up Django with Gunicorn and Nginx
 # ==========================
 
 # --- Configuration variables ---
@@ -26,12 +26,15 @@ POSTGRES_PASSWORD="mypassword"
 # ---------------------------
 echo "Starting deployment script..."
 
-# Detect server IP(s)
-echo "Detecting server IP addresses..."
-SERVER_IPS=($(hostname -I))
-ALLOWED_HOSTS=("127.0.0.1" "localhost" "${SERVER_IPS[@]}")
-echo "Detected IPs: ${SERVER_IPS[@]}"
-echo "ALLOWED_HOSTS will be set to: ${ALLOWED_HOSTS[@]}"
+# Detect active network interface and its IP
+ACTIVE_IF=$(ip route get 1 | awk '{print $5; exit}')
+ACTIVE_IP=$(ip -4 addr show $ACTIVE_IF | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+echo "Active network interface: $ACTIVE_IF"
+echo "Detected active IP: $ACTIVE_IP"
+
+# Set ALLOWED_HOSTS
+ALLOWED_HOSTS=("127.0.0.1" "localhost" "$ACTIVE_IP")
+echo "ALLOWED_HOSTS will be: ${ALLOWED_HOSTS[@]}"
 
 # Update packages
 echo "Updating system packages..."
@@ -145,5 +148,5 @@ sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
     -subj "/C=US/ST=State/L=City/O=Organization/OU=IT Department/CN=localhost"
 
 echo "Deployment finished successfully!"
-echo "Your Django site should be available on: ${ALLOWED_HOSTS[@]}"
-echo "You can access it at: http://${ALLOWED_HOSTS[0]}"
+echo "Your Django site should be available at: ${ALLOWED_HOSTS[@]}"
+echo "SSL certificate is in: /etc/ssl/$PROJECT_NAME/$PROJECT_NAME.crt"
