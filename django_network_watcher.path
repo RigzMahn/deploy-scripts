@@ -1,0 +1,11 @@
+# to be created in: sudo nano /etc/systemd/system/django_network_watcher.path
+
+[Unit]
+Description=Trigger Django Network Watcher on IP change
+
+[Path]
+PathChanged=/proc/net/route
+Unit=django_network_watcher@%i.service
+
+[Install]
+WantedBy=multi-user.target

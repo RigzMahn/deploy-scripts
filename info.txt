@@ -1,0 +1,49 @@
+⚙️ Step 4 — Enable and start the watcher
+
+Now enable the pair of units for your user:
+
+sudo systemctl enable django_network_watcher@$(whoami).service
+sudo systemctl enable django_network_watcher@$(whoami).path
+sudo systemctl start django_network_watcher@$(whoami).path
+
+
+You can check it with:
+
+systemctl status django_network_watcher@$(whoami).path
+
+
+It should show “active (running)”.
+
+⚙️ Step 5 — Test it
+
+Now switch your network (e.g. disconnect from LAN, connect via mobile hotspot).
+
+Then run:
+
+tail -f /var/log/django_network_watcher.log
+
+
+You should see output similar to:
+
+🔍 Detecting active IP...
+✅ Active IP detected: 192.168.0.105 (wlan0)
+🧩 Updating ALLOWED_HOSTS in settings.py...
+🔒 Regenerating self-signed certificate for LAN (192.168.0.105)...
+🛠 Updating Nginx configuration...
+🔁 Restarting services...
+✅ Network update complete!
+
+🧩 What You Now Have
+Component	Role
+deploy_full_https.sh	Full first-time setup for Django + HTTPS
+update_network.sh	Refreshes IP & SSL for LAN changes
+django_network_watcher.service	Runs the update script
+django_network_watcher.path	Detects network/IP changes and triggers the watcher
+🛡️ Bonus — Cleanup tip
+
+You can stop the watcher any time:
+
+sudo systemctl stop django_network_watcher@$(whoami).path
+
+
+And re-enable it later with the same start command.

@@ -1,3 +1,26 @@
+So here’s what we’ll do:
+✅ Your update_network.sh will send a short email via the system mailer each time it runs successfully.
+✅ Works perfectly with your existing systemd watcher setup.
+✅ You can choose any email address (e.g. Gmail, domain email, or even your phone’s SMS gateway).
+
+⚙️ Step 1 — Install a lightweight mailer
+
+Run this once:
+
+sudo apt install -y mailutils
+
+
+You’ll be prompted to configure postfix. Choose:
+➡️ Internet Site
+➡️ Enter your system hostname (e.g. server.local or your domain).
+
+This gives you the mail command for sending notifications.
+
+⚙️ Step 2 — Update your update_network.sh script
+
+Here’s the upgraded version with email alerts 👇
+Just replace your old version with this one:
+
 #!/bin/bash
 
 # =============================================================
@@ -67,3 +90,41 @@ else
     echo "❌ Nginx config test failed!" | tee -a $LOG_FILE
     echo "Nginx config test failed on $(hostname) during network update." | mail -s "❌ Django Network Update FAILED" $NOTIFY_EMAIL
 fi
+
+⚙️ Step 3 — Set your notification email
+
+Replace:
+
+NOTIFY_EMAIL="your_email@example.com"
+
+
+with your real address.
+
+You can even use SMS gateways like:
+
+NOTIFY_EMAIL="1234567890@vtext.com"  # for Verizon SMS alerts
+
+⚙️ Step 4 — Test it manually
+
+Run:
+
+./update_network.sh
+
+
+You should receive an email within a few seconds confirming:
+
+✅ Django Network Updated (192.168.0.xxx)
+
+⚙️ Step 5 — Watch it work automatically
+
+Your existing systemd watcher already triggers this script when you switch networks.
+Every time it runs, you’ll automatically get an email like:
+
+Subject: ✅ Django Network Updated (10.42.0.15)
+
+Body:
+Active IP: 10.42.0.15
+Domain: example.com
+Timestamp: 2025-10-15 09:43:00
+Access locally: https://10.42.0.15
+Access publicly: https://example.com

@@ -1,0 +1,19 @@
+# sudo nano /etc/systemd/system/django_network_watcher.service
+
+[Unit]
+Description=Django Network Watcher for IP Change
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+ExecStart=/bin/bash /home/%i/django_alison_lms/update_network.sh
+Restart=on-failure
+StandardOutput=append:/var/log/django_network_watcher.log
+StandardError=append:/var/log/django_network_watcher.log
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target
+
